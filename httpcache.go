@@ -63,7 +63,6 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 	if !ok {
 		return
 	}
-
 	b := bytes.NewBuffer(cachedVal)
 	return http.ReadResponse(bufio.NewReader(b), req)
 }
@@ -178,7 +177,7 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 		if err != nil {
 			return nil, err
 		}
-		if req.Method == http.MethodGet && resp.StatusCode == http.StatusNotModified {
+		if resp.StatusCode == http.StatusNotModified {
 			// Replace the 304 response with the one from cache, but update with some new headers
 			endToEndHeaders := getEndToEndHeaders(resp.Header)
 			for _, header := range endToEndHeaders {
