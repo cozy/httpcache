@@ -2,7 +2,6 @@ package httpcache
 
 import (
 	"bytes"
-	"errors"
 	"flag"
 	"io"
 	"io/ioutil"
@@ -724,10 +723,10 @@ func TestRespMustRevalidate(t *testing.T) {
 
 func TestFreshExpiration(t *testing.T) {
 	resetTest()
-	now := time.Now()
+	now := time.Now().UTC()
 	respHeaders := http.Header{}
-	respHeaders.Set("date", now.Format(time.RFC1123))
-	respHeaders.Set("expires", now.Add(time.Duration(2)*time.Second).Format(time.RFC1123))
+	respHeaders.Set("date", now.Format(http.TimeFormat))
+	respHeaders.Set("expires", now.Add(time.Duration(2)*time.Second).Format(http.TimeFormat))
 
 	reqHeaders := http.Header{}
 	if getFreshness(respHeaders, reqHeaders) != fresh {
@@ -742,9 +741,9 @@ func TestFreshExpiration(t *testing.T) {
 
 func TestMaxAge(t *testing.T) {
 	resetTest()
-	now := time.Now()
+	now := time.Now().UTC()
 	respHeaders := http.Header{}
-	respHeaders.Set("date", now.Format(time.RFC1123))
+	respHeaders.Set("date", now.Format(http.TimeFormat))
 	respHeaders.Set("cache-control", "max-age=2")
 
 	reqHeaders := http.Header{}
@@ -760,9 +759,9 @@ func TestMaxAge(t *testing.T) {
 
 func TestMaxAgeZero(t *testing.T) {
 	resetTest()
-	now := time.Now()
+	now := time.Now().UTC()
 	respHeaders := http.Header{}
-	respHeaders.Set("date", now.Format(time.RFC1123))
+	respHeaders.Set("date", now.Format(http.TimeFormat))
 	respHeaders.Set("cache-control", "max-age=0")
 
 	reqHeaders := http.Header{}
@@ -773,9 +772,9 @@ func TestMaxAgeZero(t *testing.T) {
 
 func TestBothMaxAge(t *testing.T) {
 	resetTest()
-	now := time.Now()
+	now := time.Now().UTC()
 	respHeaders := http.Header{}
-	respHeaders.Set("date", now.Format(time.RFC1123))
+	respHeaders.Set("date", now.Format(http.TimeFormat))
 	respHeaders.Set("cache-control", "max-age=2")
 
 	reqHeaders := http.Header{}
@@ -787,10 +786,10 @@ func TestBothMaxAge(t *testing.T) {
 
 func TestMinFreshWithExpires(t *testing.T) {
 	resetTest()
-	now := time.Now()
+	now := time.Now().UTC()
 	respHeaders := http.Header{}
-	respHeaders.Set("date", now.Format(time.RFC1123))
-	respHeaders.Set("expires", now.Add(time.Duration(2)*time.Second).Format(time.RFC1123))
+	respHeaders.Set("date", now.Format(http.TimeFormat))
+	respHeaders.Set("expires", now.Add(time.Duration(2)*time.Second).Format(http.TimeFormat))
 
 	reqHeaders := http.Header{}
 	reqHeaders.Set("cache-control", "min-fresh=1")
@@ -807,9 +806,9 @@ func TestMinFreshWithExpires(t *testing.T) {
 
 func TestEmptyMaxStale(t *testing.T) {
 	resetTest()
-	now := time.Now()
+	now := time.Now().UTC()
 	respHeaders := http.Header{}
-	respHeaders.Set("date", now.Format(time.RFC1123))
+	respHeaders.Set("date", now.Format(http.TimeFormat))
 	respHeaders.Set("cache-control", "max-age=20")
 
 	reqHeaders := http.Header{}
@@ -827,9 +826,9 @@ func TestEmptyMaxStale(t *testing.T) {
 
 func TestMaxStaleValue(t *testing.T) {
 	resetTest()
-	now := time.Now()
+	now := time.Now().UTC()
 	respHeaders := http.Header{}
-	respHeaders.Set("date", now.Format(time.RFC1123))
+	respHeaders.Set("date", now.Format(http.TimeFormat))
 	respHeaders.Set("cache-control", "max-age=10")
 
 	reqHeaders := http.Header{}
@@ -916,209 +915,6 @@ func (t transportMock) RoundTrip(req *http.Request) (resp *http.Response, err er
 	return t.response, t.err
 }
 
-func TestStaleIfErrorRequest(t *testing.T) {
-	resetTest()
-	now := time.Now()
-	tmock := transportMock{
-		response: &http.Response{
-			Status:     http.StatusText(http.StatusOK),
-			StatusCode: http.StatusOK,
-			Header: http.Header{
-				"Date":          []string{now.Format(time.RFC1123)},
-				"Cache-Control": []string{"no-cache"},
-			},
-			Body: ioutil.NopCloser(bytes.NewBuffer([]byte("some data"))),
-		},
-		err: nil,
-	}
-	tp := NewMemoryCacheTransport(defaultMaxEntries)
-	tp.Transport = &tmock
-
-	// First time, response is cached on success
-	r, _ := http.NewRequest("GET", "http://somewhere.com/", nil)
-	r.Header.Set("Cache-Control", "stale-if-error")
-	resp, err := tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-	_, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// On failure, response is returned from the cache
-	tmock.response = nil
-	tmock.err = errors.New("some error")
-	resp, err = tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-}
-
-func TestStaleIfErrorRequestLifetime(t *testing.T) {
-	resetTest()
-	now := time.Now()
-	tmock := transportMock{
-		response: &http.Response{
-			Status:     http.StatusText(http.StatusOK),
-			StatusCode: http.StatusOK,
-			Header: http.Header{
-				"Date":          []string{now.Format(time.RFC1123)},
-				"Cache-Control": []string{"no-cache"},
-			},
-			Body: ioutil.NopCloser(bytes.NewBuffer([]byte("some data"))),
-		},
-		err: nil,
-	}
-	tp := NewMemoryCacheTransport(defaultMaxEntries)
-	tp.Transport = &tmock
-
-	// First time, response is cached on success
-	r, _ := http.NewRequest("GET", "http://somewhere.com/", nil)
-	r.Header.Set("Cache-Control", "stale-if-error=100")
-	resp, err := tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-	_, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// On failure, response is returned from the cache
-	tmock.response = nil
-	tmock.err = errors.New("some error")
-	resp, err = tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-
-	// Same for http errors
-	tmock.response = &http.Response{StatusCode: http.StatusInternalServerError}
-	tmock.err = nil
-	resp, err = tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-
-	// If failure last more than max stale, error is returned
-	clock = &fakeClock{elapsed: 200 * time.Second}
-	_, err = tp.RoundTrip(r)
-	if err != tmock.err {
-		t.Fatalf("got err %v, want %v", err, tmock.err)
-	}
-}
-
-func TestStaleIfErrorResponse(t *testing.T) {
-	resetTest()
-	now := time.Now()
-	tmock := transportMock{
-		response: &http.Response{
-			Status:     http.StatusText(http.StatusOK),
-			StatusCode: http.StatusOK,
-			Header: http.Header{
-				"Date":          []string{now.Format(time.RFC1123)},
-				"Cache-Control": []string{"no-cache, stale-if-error"},
-			},
-			Body: ioutil.NopCloser(bytes.NewBuffer([]byte("some data"))),
-		},
-		err: nil,
-	}
-	tp := NewMemoryCacheTransport(defaultMaxEntries)
-	tp.Transport = &tmock
-
-	// First time, response is cached on success
-	r, _ := http.NewRequest("GET", "http://somewhere.com/", nil)
-	resp, err := tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-	_, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// On failure, response is returned from the cache
-	tmock.response = nil
-	tmock.err = errors.New("some error")
-	resp, err = tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-}
-
-func TestStaleIfErrorResponseLifetime(t *testing.T) {
-	resetTest()
-	now := time.Now()
-	tmock := transportMock{
-		response: &http.Response{
-			Status:     http.StatusText(http.StatusOK),
-			StatusCode: http.StatusOK,
-			Header: http.Header{
-				"Date":          []string{now.Format(time.RFC1123)},
-				"Cache-Control": []string{"no-cache, stale-if-error=100"},
-			},
-			Body: ioutil.NopCloser(bytes.NewBuffer([]byte("some data"))),
-		},
-		err: nil,
-	}
-	tp := NewMemoryCacheTransport(defaultMaxEntries)
-	tp.Transport = &tmock
-
-	// First time, response is cached on success
-	r, _ := http.NewRequest("GET", "http://somewhere.com/", nil)
-	resp, err := tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-	_, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// On failure, response is returned from the cache
-	tmock.response = nil
-	tmock.err = errors.New("some error")
-	resp, err = tp.RoundTrip(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil {
-		t.Fatal("resp is nil")
-	}
-
-	// If failure last more than max stale, error is returned
-	clock = &fakeClock{elapsed: 200 * time.Second}
-	_, err = tp.RoundTrip(r)
-	if err != tmock.err {
-		t.Fatalf("got err %v, want %v", err, tmock.err)
-	}
-}
-
 // Test that http.Client.Timeout is respected when cache transport is used.
 // That is so as long as request cancellation is propagated correctly.
 // In the past, that required CancelRequest to be implemented correctly,
@@ -1133,7 +929,7 @@ func TestClientTimeout(t *testing.T) {
 		Transport: NewMemoryCacheTransport(defaultMaxEntries),
 		Timeout:   time.Second,
 	}
-	started := time.Now()
+	started := time.Now().UTC()
 	resp, err := client.Get(s.server.URL + "/3seconds")
 	taken := time.Since(started)
 	if err == nil {
@@ -1154,10 +950,10 @@ func TestGetWithStatuseCodes(t *testing.T) {
 		http.StatusNonAuthoritativeInfo: true,
 		http.StatusMultipleChoices:      true,
 		http.StatusMovedPermanently:     true,
-		http.StatusFound:                true,
 		http.StatusNotFound:             true,
 		http.StatusGone:                 true,
 		// Some NOT-Cacheable status codes
+		http.StatusFound:               false,
 		http.StatusNotModified:         false,
 		http.StatusBadRequest:          false,
 		http.StatusUnauthorized:        false,

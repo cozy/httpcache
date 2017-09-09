@@ -25,9 +25,10 @@ const (
 	stale = iota
 	fresh
 	transparent
-	// XFromCache is the header added to responses that are returned from the cache
-	XFromCache = "X-From-Cache"
 )
+
+// XFromCache is the header added to responses that are returned from the cache
+const XFromCache = "X-From-Cache"
 
 var cacheableResponseCodes = map[int]struct{}{
 	http.StatusOK:                   {}, // 200
@@ -278,14 +279,14 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 			lifetime = zeroDuration
 		}
 	} else {
-		expiresHeader := respHeaders.Get("Expires")
+		expiresHeader := respHeaders.Get("expires")
 		if expiresHeader != "" {
 			var expires time.Time
 			expires, err = time.Parse(http.TimeFormat, expiresHeader)
 			if err != nil {
-				lifetime = expires.Sub(date)
-			} else {
 				lifetime = zeroDuration
+			} else {
+				lifetime = expires.Sub(date)
 			}
 		}
 	}
@@ -334,14 +335,14 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 func getEndToEndHeaders(respHeaders http.Header) []string {
 	// These headers are always hop-by-hop
 	hopByHopHeaders := map[string]struct{}{
-		"Connection":          struct{}{},
-		"Keep-Alive":          struct{}{},
-		"Proxy-Authenticate":  struct{}{},
-		"Proxy-Authorization": struct{}{},
-		"Te":                struct{}{},
-		"Trailers":          struct{}{},
-		"Transfer-Encoding": struct{}{},
-		"Upgrade":           struct{}{},
+		"Connection":          {},
+		"Keep-Alive":          {},
+		"Proxy-Authenticate":  {},
+		"Proxy-Authorization": {},
+		"Te":                {},
+		"Trailers":          {},
+		"Transfer-Encoding": {},
+		"Upgrade":           {},
 	}
 
 	for _, extra := range strings.Split(respHeaders.Get("connection"), ",") {
