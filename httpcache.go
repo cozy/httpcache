@@ -240,7 +240,7 @@ func Date(respHeaders http.Header) (date time.Time, err error) {
 		return
 	}
 
-	return time.Parse(time.RFC1123, dateHeader)
+	return time.Parse(http.TimeFormat, dateHeader)
 }
 
 type realClock struct{}
@@ -296,11 +296,12 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 	} else {
 		expiresHeader := respHeaders.Get("Expires")
 		if expiresHeader != "" {
-			expires, err := time.Parse(time.RFC1123, expiresHeader)
+			var expires time.Time
+			expires, err = time.Parse(http.TimeFormat, expiresHeader)
 			if err != nil {
-				lifetime = zeroDuration
-			} else {
 				lifetime = expires.Sub(date)
+			} else {
+				lifetime = zeroDuration
 			}
 		}
 	}
@@ -316,7 +317,7 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 		//  the client wants a response that will still be fresh for at least the specified number of seconds.
 		minfreshDuration, err := time.ParseDuration(minfresh + "s")
 		if err == nil {
-			currentAge = time.Duration(currentAge + minfreshDuration)
+			currentAge = currentAge + minfreshDuration
 		}
 	}
 
@@ -334,7 +335,7 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 		}
 		maxstaleDuration, err := time.ParseDuration(maxstale + "s")
 		if err == nil {
-			currentAge = time.Duration(currentAge - maxstaleDuration)
+			currentAge = currentAge - maxstaleDuration
 		}
 	}
 
@@ -409,7 +410,7 @@ func getEndToEndHeaders(respHeaders http.Header) []string {
 		}
 	}
 	endToEndHeaders := []string{}
-	for respHeader, _ := range respHeaders {
+	for respHeader := range respHeaders {
 		if _, ok := hopByHopHeaders[respHeader]; !ok {
 			endToEndHeaders = append(endToEndHeaders, respHeader)
 		}

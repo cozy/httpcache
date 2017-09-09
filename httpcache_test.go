@@ -1167,6 +1167,9 @@ func TestGetWithStatuseCodes(t *testing.T) {
 	for statusInt, isCacheable := range statusCaching {
 		path := "/status/" + strconv.Itoa(statusInt)
 		req, err := http.NewRequest("GET", s.server.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 		resp, err := s.transport.RoundTrip(req)
 		if err != nil {
 			t.Fatal(err)
