@@ -33,6 +33,7 @@ const XFromCache = "X-From-Cache"
 var cacheableResponseCodes = map[int]struct{}{
 	http.StatusOK:                   {}, // 200
 	http.StatusNonAuthoritativeInfo: {}, // 203
+	http.StatusNoContent:            {}, // 204
 	http.StatusMultipleChoices:      {}, // 300
 	http.StatusMovedPermanently:     {}, // 301
 	http.StatusNotFound:             {}, // 404
@@ -201,8 +202,7 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 		parseCacheControl(req.Header),
 		parseCacheControl(resp.Header))
 	if storeable {
-		switch req.Method {
-		case http.MethodGet:
+		if req.Method == http.MethodGet && resp.StatusCode == http.StatusOK {
 			// Delay caching until EOF is reached.
 			resp.Body = &cachingReadCloser{
 				R: resp.Body,
@@ -215,7 +215,7 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 					}
 				},
 			}
-		default:
+		} else {
 			respBytes, err := httputil.DumpResponse(resp, true)
 			if err == nil {
 				t.Cache.Set(cacheKey, respBytes)
