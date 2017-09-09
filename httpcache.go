@@ -34,7 +34,6 @@ var cacheableResponseCodes = map[int]struct{}{
 	http.StatusNonAuthoritativeInfo: {}, // 203
 	http.StatusMultipleChoices:      {}, // 300
 	http.StatusMovedPermanently:     {}, // 301
-	http.StatusFound:                {}, // 302
 	http.StatusNotFound:             {}, // 404
 	http.StatusGone:                 {}, // 410
 }
