@@ -9,7 +9,6 @@ package httpcache
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -175,18 +174,16 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 		}
 
 		resp, err = transport.RoundTrip(req)
-		if err == nil && req.Method == http.MethodGet && resp.StatusCode == http.StatusNotModified {
+		if err != nil {
+			return nil, err
+		}
+		if req.Method == http.MethodGet && resp.StatusCode == http.StatusNotModified {
 			// Replace the 304 response with the one from cache, but update with some new headers
 			endToEndHeaders := getEndToEndHeaders(resp.Header)
 			for _, header := range endToEndHeaders {
 				cachedResp.Header[header] = resp.Header[header]
 			}
 			resp = cachedResp
-		} else if (err != nil || (cachedResp != nil && resp.StatusCode >= 500)) &&
-			req.Method == http.MethodGet && canStaleOnError(cachedResp.Header, req.Header) {
-			return cachedResp, nil
-		} else if err != nil {
-			return nil, err
 		}
 	} else {
 		reqCacheControl := parseCacheControl(req.Header)
@@ -230,20 +227,6 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	return resp, nil
 }
 
-// ErrNoDateHeader indicates that the HTTP headers contained no Date header.
-var ErrNoDateHeader = errors.New("no Date header")
-
-// Date parses and returns the value of the Date header.
-func Date(respHeaders http.Header) (date time.Time, err error) {
-	dateHeader := respHeaders.Get("date")
-	if dateHeader == "" {
-		err = ErrNoDateHeader
-		return
-	}
-
-	return time.Parse(http.TimeFormat, dateHeader)
-}
-
 type realClock struct{}
 
 func (c *realClock) since(d time.Time) time.Duration {
@@ -278,12 +261,13 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 		return fresh
 	}
 
-	date, err := Date(respHeaders)
-	if err != nil {
+	date, ok := parseDate(respHeaders)
+	if !ok {
 		return stale
 	}
 	currentAge := clock.since(date)
 
+	var err error
 	var lifetime time.Duration
 	var zeroDuration time.Duration
 
@@ -314,6 +298,7 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 			lifetime = zeroDuration
 		}
 	}
+
 	if minfresh, ok := reqCacheControl["min-fresh"]; ok {
 		//  the client wants a response that will still be fresh for at least the specified number of seconds.
 		minfreshDuration, err := parseDuration(minfresh)
@@ -345,50 +330,6 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 	}
 
 	return stale
-}
-
-// Returns true if either the request or the response includes the stale-if-error
-// cache control extension: https://tools.ietf.org/html/rfc5861
-func canStaleOnError(respHeaders, reqHeaders http.Header) bool {
-	respCacheControl := parseCacheControl(respHeaders)
-	reqCacheControl := parseCacheControl(reqHeaders)
-
-	var err error
-	lifetime := time.Duration(-1)
-
-	if staleMaxAge, ok := respCacheControl["stale-if-error"]; ok {
-		if staleMaxAge != "" {
-			lifetime, err = parseDuration(staleMaxAge)
-			if err != nil {
-				return false
-			}
-		} else {
-			return true
-		}
-	}
-	if staleMaxAge, ok := reqCacheControl["stale-if-error"]; ok {
-		if staleMaxAge != "" {
-			lifetime, err = parseDuration(staleMaxAge)
-			if err != nil {
-				return false
-			}
-		} else {
-			return true
-		}
-	}
-
-	if lifetime >= 0 {
-		date, err := Date(respHeaders)
-		if err != nil {
-			return false
-		}
-		currentAge := clock.since(date)
-		if lifetime > currentAge {
-			return true
-		}
-	}
-
-	return false
 }
 
 func getEndToEndHeaders(respHeaders http.Header) []string {
@@ -519,4 +460,15 @@ func parseDuration(s string) (time.Duration, error) {
 		return 0, err
 	}
 	return time.Duration(i) * time.Second, nil
+}
+
+func parseDate(respHeaders http.Header) (date time.Time, ok bool) {
+	dateHeader := respHeaders.Get("date")
+	if dateHeader == "" {
+		return
+	}
+	var err error
+	date, err = time.Parse(http.TimeFormat, dateHeader)
+	ok = (err == nil)
+	return
 }
