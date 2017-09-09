@@ -14,6 +14,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -289,7 +290,7 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 	// If a response includes both an Expires header and a max-age directive,
 	// the max-age directive overrides the Expires header, even if the Expires header is more restrictive.
 	if maxAge, ok := respCacheControl["max-age"]; ok {
-		lifetime, err = time.ParseDuration(maxAge + "s")
+		lifetime, err = parseDuration(maxAge)
 		if err != nil {
 			lifetime = zeroDuration
 		}
@@ -308,14 +309,14 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 
 	if maxAge, ok := reqCacheControl["max-age"]; ok {
 		// the client is willing to accept a response whose age is no greater than the specified time in seconds
-		lifetime, err = time.ParseDuration(maxAge + "s")
+		lifetime, err = parseDuration(maxAge)
 		if err != nil {
 			lifetime = zeroDuration
 		}
 	}
 	if minfresh, ok := reqCacheControl["min-fresh"]; ok {
 		//  the client wants a response that will still be fresh for at least the specified number of seconds.
-		minfreshDuration, err := time.ParseDuration(minfresh + "s")
+		minfreshDuration, err := parseDuration(minfresh)
 		if err == nil {
 			currentAge = currentAge + minfreshDuration
 		}
@@ -333,7 +334,7 @@ func getFreshness(respHeaders, reqHeaders http.Header) (freshness int) {
 		if maxstale == "" {
 			return fresh
 		}
-		maxstaleDuration, err := time.ParseDuration(maxstale + "s")
+		maxstaleDuration, err := parseDuration(maxstale)
 		if err == nil {
 			currentAge = currentAge - maxstaleDuration
 		}
@@ -357,7 +358,7 @@ func canStaleOnError(respHeaders, reqHeaders http.Header) bool {
 
 	if staleMaxAge, ok := respCacheControl["stale-if-error"]; ok {
 		if staleMaxAge != "" {
-			lifetime, err = time.ParseDuration(staleMaxAge + "s")
+			lifetime, err = parseDuration(staleMaxAge)
 			if err != nil {
 				return false
 			}
@@ -367,7 +368,7 @@ func canStaleOnError(respHeaders, reqHeaders http.Header) bool {
 	}
 	if staleMaxAge, ok := reqCacheControl["stale-if-error"]; ok {
 		if staleMaxAge != "" {
-			lifetime, err = time.ParseDuration(staleMaxAge + "s")
+			lifetime, err = parseDuration(staleMaxAge)
 			if err != nil {
 				return false
 			}
@@ -510,4 +511,12 @@ func NewMemoryCacheTransport(maxEntries int) *Transport {
 	c := NewMemoryCache(maxEntries)
 	t := NewTransport(c)
 	return t
+}
+
+func parseDuration(s string) (time.Duration, error) {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(i) * time.Second, nil
 }
