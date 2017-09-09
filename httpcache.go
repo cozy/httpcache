@@ -454,7 +454,7 @@ func NewMemoryCacheTransport(maxEntries int) *Transport {
 }
 
 func parseDuration(s string) (time.Duration, error) {
-	i, err := strconv.Atoi(s)
+	i, err := strconv.ParseInt(s, 10, 0)
 	if err != nil {
 		return 0, err
 	}
