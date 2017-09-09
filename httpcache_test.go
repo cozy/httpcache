@@ -8,11 +8,15 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+const defaultMaxEntries = 32
 
 var s struct {
 	server    *httptest.Server
@@ -38,7 +42,7 @@ func TestMain(m *testing.M) {
 }
 
 func setup() {
-	tp := NewMemoryCacheTransport()
+	tp := NewMemoryCacheTransport(defaultMaxEntries)
 	client := http.Client{Transport: tp}
 	s.transport = tp
 	s.client = client
@@ -93,26 +97,6 @@ func setup() {
 		w.Header().Set("last-modified", lm)
 	}))
 
-	mux.HandleFunc("/varyaccept", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "max-age=3600")
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Vary", "Accept")
-		w.Write([]byte("Some text content"))
-	}))
-
-	mux.HandleFunc("/doublevary", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "max-age=3600")
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Vary", "Accept, Accept-Language")
-		w.Write([]byte("Some text content"))
-	}))
-	mux.HandleFunc("/2varyheaders", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "max-age=3600")
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Add("Vary", "Accept")
-		w.Header().Add("Vary", "Accept-Language")
-		w.Write([]byte("Some text content"))
-	}))
 	mux.HandleFunc("/varyunused", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "max-age=3600")
 		w.Header().Set("Content-Type", "text/plain")
@@ -147,6 +131,20 @@ func setup() {
 			}
 		}
 	}))
+
+	// [/status/:code] - Respond with a particular status code
+	mux.HandleFunc("/status/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		statusStr := strings.Trim(strings.TrimPrefix(r.URL.Path, "/status/"), "/")
+		statusInt, err := strconv.Atoi(statusStr)
+		if err != nil {
+			panic(err)
+		} else if statusInt == 301 || statusInt == 302 {
+			w.Header().Set("Location", "http://example.com")
+		}
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.WriteHeader(statusInt)
+		w.Write([]byte("Some text content"))
+	}))
 }
 
 func teardown() {
@@ -155,7 +153,7 @@ func teardown() {
 }
 
 func resetTest() {
-	s.transport.Cache = NewMemoryCache()
+	s.transport.Cache = NewMemoryCache(defaultMaxEntries)
 	clock = &realClock{}
 }
 
@@ -571,216 +569,6 @@ func TestGetWithLastModified(t *testing.T) {
 	}
 }
 
-func TestGetWithVary(t *testing.T) {
-	resetTest()
-	req, err := http.NewRequest("GET", s.server.URL+"/varyaccept", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Accept", "text/plain")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get("Vary") != "Accept" {
-			t.Fatalf(`Vary header isn't "Accept": %v`, resp.Header.Get("Vary"))
-		}
-		_, err = ioutil.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "1" {
-			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
-		}
-	}
-	req.Header.Set("Accept", "text/html")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-	}
-	req.Header.Set("Accept", "")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-	}
-}
-
-func TestGetWithDoubleVary(t *testing.T) {
-	resetTest()
-	req, err := http.NewRequest("GET", s.server.URL+"/doublevary", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Accept", "text/plain")
-	req.Header.Set("Accept-Language", "da, en-gb;q=0.8, en;q=0.7")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get("Vary") == "" {
-			t.Fatalf(`Vary header is blank`)
-		}
-		_, err = ioutil.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "1" {
-			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
-		}
-	}
-	req.Header.Set("Accept-Language", "")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-	}
-	req.Header.Set("Accept-Language", "da")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-	}
-}
-
-func TestGetWith2VaryHeaders(t *testing.T) {
-	resetTest()
-	// Tests that multiple Vary headers' comma-separated lists are
-	// merged. See https://github.com/gregjones/httpcache/issues/27.
-	const (
-		accept         = "text/plain"
-		acceptLanguage = "da, en-gb;q=0.8, en;q=0.7"
-	)
-	req, err := http.NewRequest("GET", s.server.URL+"/2varyheaders", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Accept", accept)
-	req.Header.Set("Accept-Language", acceptLanguage)
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get("Vary") == "" {
-			t.Fatalf(`Vary header is blank`)
-		}
-		_, err = ioutil.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "1" {
-			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
-		}
-	}
-	req.Header.Set("Accept-Language", "")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-	}
-	req.Header.Set("Accept-Language", "da")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-	}
-	req.Header.Set("Accept-Language", acceptLanguage)
-	req.Header.Set("Accept", "")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-	}
-	req.Header.Set("Accept", "image/png")
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "" {
-			t.Fatal("XFromCache header isn't blank")
-		}
-		_, err = ioutil.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	{
-		resp, err := s.client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.Header.Get(XFromCache) != "1" {
-			t.Fatalf(`XFromCache header isn't "1": %v`, resp.Header.Get(XFromCache))
-		}
-	}
-}
-
 func TestGetVaryUnused(t *testing.T) {
 	resetTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/varyunused", nil)
@@ -1143,7 +931,7 @@ func TestStaleIfErrorRequest(t *testing.T) {
 		},
 		err: nil,
 	}
-	tp := NewMemoryCacheTransport()
+	tp := NewMemoryCacheTransport(defaultMaxEntries)
 	tp.Transport = &tmock
 
 	// First time, response is cached on success
@@ -1188,7 +976,7 @@ func TestStaleIfErrorRequestLifetime(t *testing.T) {
 		},
 		err: nil,
 	}
-	tp := NewMemoryCacheTransport()
+	tp := NewMemoryCacheTransport(defaultMaxEntries)
 	tp.Transport = &tmock
 
 	// First time, response is cached on success
@@ -1251,7 +1039,7 @@ func TestStaleIfErrorResponse(t *testing.T) {
 		},
 		err: nil,
 	}
-	tp := NewMemoryCacheTransport()
+	tp := NewMemoryCacheTransport(defaultMaxEntries)
 	tp.Transport = &tmock
 
 	// First time, response is cached on success
@@ -1295,7 +1083,7 @@ func TestStaleIfErrorResponseLifetime(t *testing.T) {
 		},
 		err: nil,
 	}
-	tp := NewMemoryCacheTransport()
+	tp := NewMemoryCacheTransport(defaultMaxEntries)
 	tp.Transport = &tmock
 
 	// First time, response is cached on success
@@ -1342,7 +1130,7 @@ func TestClientTimeout(t *testing.T) {
 	}
 	resetTest()
 	client := &http.Client{
-		Transport: NewMemoryCacheTransport(),
+		Transport: NewMemoryCacheTransport(defaultMaxEntries),
 		Timeout:   time.Second,
 	}
 	started := time.Now()
@@ -1356,5 +1144,53 @@ func TestClientTimeout(t *testing.T) {
 	}
 	if taken >= 2*time.Second {
 		t.Error("client.Do took 2+ seconds, want < 2 seconds")
+	}
+}
+
+func TestGetWithStatuseCodes(t *testing.T) {
+	statusCaching := map[int]bool{
+		// Cacheable status codes
+		http.StatusOK:                   true,
+		http.StatusNonAuthoritativeInfo: true,
+		http.StatusMultipleChoices:      true,
+		http.StatusMovedPermanently:     true,
+		http.StatusFound:                true,
+		http.StatusNotFound:             true,
+		http.StatusGone:                 true,
+		// Some NOT-Cacheable status codes
+		http.StatusNotModified:         false,
+		http.StatusBadRequest:          false,
+		http.StatusUnauthorized:        false,
+		http.StatusInternalServerError: false,
+	}
+
+	for statusInt, isCacheable := range statusCaching {
+		path := "/status/" + strconv.Itoa(statusInt)
+		req, err := http.NewRequest("GET", s.server.URL+path, nil)
+		resp, err := s.transport.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		httputil.DumpResponse(resp, false)
+		if resp.Header.Get(XFromCache) != "" {
+			t.Fatal("Initial request should not be cached")
+		}
+		if resp.StatusCode != statusInt {
+			t.Errorf("got %d, want %d", resp.StatusCode, statusInt)
+		}
+		_, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp2, err2 := s.transport.RoundTrip(req)
+		if err2 != nil {
+			t.Fatal(err2)
+		}
+		httputil.DumpResponse(resp2, false)
+		isCached := resp2.Header.Get(XFromCache) == "1"
+		if isCacheable != isCached {
+			t.Fatalf("Should be cached %s: %t got: %t", path, isCacheable, isCached)
+		}
 	}
 }
