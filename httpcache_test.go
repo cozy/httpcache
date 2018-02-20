@@ -103,6 +103,17 @@ func setup() {
 		w.Write([]byte("Some text content"))
 	}))
 
+	mux.HandleFunc("/cachederror", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		etag := "abc"
+		if r.Header.Get("if-none-match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("etag", etag)
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("Not found"))
+	}))
+
 	updateFieldsCounter := 0
 	mux.HandleFunc("/updatefields", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Counter", strconv.Itoa(updateFieldsCounter))
@@ -212,6 +223,30 @@ func TestCacheableMethod(t *testing.T) {
 		if resp.Header.Get(XFromCache) != "" {
 			t.Errorf("XFromCache header isn't blank")
 		}
+	}
+}
+
+func TestDontServeHeadResponseToGetRequest(t *testing.T) {
+	resetTest()
+	url := s.server.URL + "/"
+	req, err := http.NewRequest(http.MethodHead, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err = http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Header.Get(XFromCache) != "" {
+		t.Errorf("Cache should not match")
 	}
 }
 
@@ -633,6 +668,35 @@ func TestUpdateFields(t *testing.T) {
 	}
 	if counter == counter2 {
 		t.Fatalf(`both "x-counter" values are equal: %v %v`, counter, counter2)
+	}
+}
+
+// This tests the fix for https://github.com/gregjones/httpcache/issues/74.
+// Previously, after validating a cached response, its StatusCode
+// was incorrectly being replaced.
+func TestCachedErrorsKeepStatus(t *testing.T) {
+	resetTest()
+	req, err := http.NewRequest("GET", s.server.URL+"/cachederror", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		io.Copy(ioutil.Discard, resp.Body)
+	}
+	{
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("Status code isn't 404: %d", resp.StatusCode)
+		}
 	}
 }
 
