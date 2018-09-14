@@ -187,7 +187,11 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 			for _, header := range endToEndHeaders {
 				cachedResp.Header[header] = resp.Header[header]
 			}
-			resp = cachedResp
+			respBytes, err := httputil.DumpResponse(cachedResp, true)
+			if err == nil {
+				t.Cache.Set(cacheKey, respBytes)
+			}
+			return cachedResp, nil
 		}
 	} else {
 		reqCacheControl := parseCacheControl(req.Header)
@@ -205,13 +209,13 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 		parseCacheControl(req.Header),
 		parseCacheControl(resp.Header))
 	if storeable {
-		if req.Method == http.MethodGet && resp.StatusCode == http.StatusOK {
+		if req.Method == http.MethodGet && resp.StatusCode != http.StatusNoContent {
 			// Delay caching until EOF is reached.
 			resp.Body = &cachingReadCloser{
 				R: resp.Body,
-				OnEOF: func(r io.Reader) {
+				OnClose: func(b []byte) {
 					resp := *resp
-					resp.Body = ioutil.NopCloser(r)
+					resp.Body = ioutil.NopCloser(bytes.NewReader(b))
 					respBytes, err := httputil.DumpResponse(&resp, true)
 					if err == nil {
 						t.Cache.Set(cacheKey, respBytes)
@@ -421,33 +425,38 @@ func parseCacheControl(headers http.Header) cacheControl {
 	return cc
 }
 
-// cachingReadCloser is a wrapper around ReadCloser R that calls OnEOF
-// handler with a full copy of the content read from R when EOF is
-// reached.
+// cachingReadCloser is a wrapper around ReadCloser R that calls OnClose
+// handler with a full copy of the content read from R when close is
+// called.
 type cachingReadCloser struct {
 	// Underlying ReadCloser.
 	R io.ReadCloser
-	// OnEOF is called with a copy of the content of R when EOF is reached.
-	OnEOF func(io.Reader)
+	// OnClose is called with a copy of the content of R when EOF is reached.
+	OnClose func([]byte)
 
+	err error
 	buf bytes.Buffer // buf stores a copy of the content of R.
 }
 
 // Read reads the next len(p) bytes from R or until R is drained. The
 // return value n is the number of bytes read. If R has no data to
-// return, err is io.EOF and OnEOF is called with a full copy of what
+// return, err is io.EOF and OnClose is called with a full copy of what
 // has been read so far.
 func (r *cachingReadCloser) Read(p []byte) (n int, err error) {
 	n, err = r.R.Read(p)
 	r.buf.Write(p[:n])
-	if err == io.EOF {
-		r.OnEOF(bytes.NewReader(r.buf.Bytes()))
+	if r.err == nil {
+		r.err = err
 	}
 	return n, err
 }
 
 func (r *cachingReadCloser) Close() error {
-	return r.R.Close()
+	errc := r.R.Close()
+	if errc == nil && r.err == io.EOF {
+		r.OnClose(r.buf.Bytes())
+	}
+	return errc
 }
 
 // NewMemoryCacheTransport returns a new Transport using the in-memory cache implementation
