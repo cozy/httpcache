@@ -79,9 +79,9 @@ type MemoryCache struct {
 
 // Get returns the []byte representation of the response and true if present, false if not
 func (c *MemoryCache) Get(key string) (resp []byte, ok bool) {
-	c.mu.RLock()
+	c.mu.Lock()
 	resp, ok = c.items.Get(lru.Key(key))
-	c.mu.RUnlock()
+	c.mu.Unlock()
 	return resp, ok
 }
 
@@ -346,10 +346,10 @@ func getEndToEndHeaders(respHeaders http.Header) []string {
 		"Keep-Alive":          {},
 		"Proxy-Authenticate":  {},
 		"Proxy-Authorization": {},
-		"Te":                {},
-		"Trailers":          {},
-		"Transfer-Encoding": {},
-		"Upgrade":           {},
+		"Te":                  {},
+		"Trailers":            {},
+		"Transfer-Encoding":   {},
+		"Upgrade":             {},
 	}
 
 	for _, extra := range strings.Split(respHeaders.Get("connection"), ",") {
